@@ -1,6 +1,7 @@
 from __future__ import print_function
 import argparse
 import random
+from numpy.lib.type_check import real
 import torch
 import torch.nn as nn
 import torch.nn.parallel
@@ -10,6 +11,7 @@ import torch.utils.data
 import torchvision.datasets as dset
 import torchvision.transforms as transforms
 import torchvision.utils as vutils
+import torch.autograd as autograd
 from torch.autograd import Variable
 import os
 import json
@@ -210,6 +212,7 @@ if __name__=="__main__":
                     real_cpu = real_cpu.cuda()
                 input.resize_as_(real_cpu).copy_(real_cpu)
                 inputv = Variable(input)
+                real = inputv
 
                 netD_predreal, errD_real = netD(inputv)
                 errD_real.backward(one)     # backward函数：计算反向传播计算梯度值
@@ -235,7 +238,27 @@ if __name__=="__main__":
                 # lambda_tsallis_relative = 0.01
                 # tsallis_relative_fake = entropy.Tsallis_Relative_Entropy(预测标签, 真实标签, lambda_tsallis_relative).value()
 
-                # 计算判别器总误差‘梯度’并更新
+                '''----------------------------------------关于熵的相关改动----------------------------------------'''
+                lambda_gp = 10
+                # epsilon是位于0-1之间均匀分布的随机权重项
+                epsilon = torch.rand(real.size(0), 1, 1, 1).cuda()   # size(0)为矩阵行数
+                # 获取夹在real和fake之间的随机分布
+                x_hat = epsilon * real + (1 - epsilon) * fake.requires_grad_(True)
+                y_hat = netD(x_hat)
+                # 计算y_hat相对于x_hat的梯度之和
+                gradients = autograd.grad(
+                    outputs=y_hat,
+                    inputs=x_hat,
+                    grad_outputs=torch.ones(y_hat.size()).cuda(),
+                    create_graph=True,
+                    retain_graph=True,
+                    only_inputs=True,
+                )[0]
+                gradients = gradients.view(gradients.size(0), -1)
+                gradient_penalty = torch.mean(((gradients.norm(2, dim=1) - 1) ** 2))
+                print(gradient_penalty)
+
+                '''----------------------------------------计算判别器总误差‘梯度’并更新----------------------------------------'''
                 # errD = errD_real - errD_fake + gini_fake
                 errD = errD_real - errD_fake + tsallis_fake
                 optimizerD.step()           # 进行梯度更新
