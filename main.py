@@ -100,7 +100,8 @@ if __name__=="__main__":
         )
     assert dataset  # assert用处:让程序测试条件，如果条件正确继续执行，如果条件错误，报错
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=opt.batchSize,
-                                            shuffle=True, num_workers=int(opt.workers))
+                                            shuffle=True, num_workers=int(opt.workers),
+                                            drop_last=True)
 
     ngpu = int(opt.ngpu)    # GPU的数量,默认为1
     nz = int(opt.nz)        # z向量的大小,默认为100
@@ -238,13 +239,13 @@ if __name__=="__main__":
                 # lambda_tsallis_relative = 0.01
                 # tsallis_relative_fake = entropy.Tsallis_Relative_Entropy(预测标签, 真实标签, lambda_tsallis_relative).value()
 
-                '''----------------------------------------关于熵的相关改动----------------------------------------'''
-                lambda_gp = 10
+                '''----------------------------------------jia----------------------------------------'''
+                lambda_gp = 0.1
                 # epsilon是位于0-1之间均匀分布的随机权重项
                 epsilon = torch.rand(real.size(0), 1, 1, 1).cuda()   # size(0)为矩阵行数
                 # 获取夹在real和fake之间的随机分布
                 x_hat = epsilon * real + (1 - epsilon) * fake.requires_grad_(True)
-                y_hat = netD(x_hat)
+                _, y_hat = netD(x_hat)
                 # 计算y_hat相对于x_hat的梯度之和
                 gradients = autograd.grad(
                     outputs=y_hat,
@@ -255,12 +256,12 @@ if __name__=="__main__":
                     only_inputs=True,
                 )[0]
                 gradients = gradients.view(gradients.size(0), -1)
-                gradient_penalty = torch.mean(((gradients.norm(2, dim=1) - 1) ** 2))
-                print(gradient_penalty)
+                gradient_penalty = lambda_gp * torch.mean(((gradients.norm(2, dim=1) - 1) ** 2))
 
                 '''----------------------------------------计算判别器总误差‘梯度’并更新----------------------------------------'''
                 # errD = errD_real - errD_fake + gini_fake
-                errD = errD_real - errD_fake + tsallis_fake
+                # errD = errD_real - errD_fake + tsallis_fake
+                errD = errD_real - errD_fake - gradient_penalty
                 optimizerD.step()           # 进行梯度更新
 
             ############################
@@ -285,9 +286,12 @@ if __name__=="__main__":
                 # print('[%d/%d][%d/%d][%d] Loss_D: %f Loss_G: %f Loss_D_real: %f Loss_D_fake: %f Gini_fake: %f'
                 #     % (epoch, opt.niter, i, len(dataloader), gen_iterations,
                 #     errD.data[0], errG.data[0], errD_real.data[0], errD_fake.data[0], gini_fake.item()))
-                print('[%d/%d][%d/%d][%d] Loss_D: %f Loss_G: %f Loss_D_real: %f Loss_D_fake: %f Tsallis_fake: %f'
+                # print('[%d/%d][%d/%d][%d] Loss_D: %f Loss_G: %f Loss_D_real: %f Loss_D_fake: %f Tsallis_fake: %f'
+                #     % (epoch, opt.niter, i, len(dataloader), gen_iterations,
+                #     errD.data[0], errG.data[0], errD_real.data[0], errD_fake.data[0], tsallis_fake.item()))
+                print('[%d/%d][%d/%d][%d] Loss_D: %f Loss_G: %f Loss_D_real: %f Loss_D_fake: %f Gradient_Penalty: %f'
                     % (epoch, opt.niter, i, len(dataloader), gen_iterations,
-                    errD.data[0], errG.data[0], errD_real.data[0], errD_fake.data[0], tsallis_fake.item()))
+                    errD.data[0], errG.data[0], errD_real.data[0], errD_fake.data[0], gradient_penalty.item()))
             if gen_iterations % 500 == 0:
                 real_cpu = real_cpu.mul(0.5).add(0.5)
                 vutils.save_image(real_cpu, '{0}/real_samples.png'.format(opt.experiment))
