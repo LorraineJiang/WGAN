@@ -15,6 +15,7 @@ import torch.autograd as autograd
 from torch.autograd import Variable
 import os
 import json
+import time
 
 import models.dcgan as dcgan
 import models.mlp as mlp
@@ -177,6 +178,7 @@ if __name__=="__main__":
         optimizerG = optim.RMSprop(netG.parameters(), lr = opt.lrG)
 
     '''----------------------------------------开始训练----------------------------------------'''
+    time_start = time.time()                    # 开始计时
     gen_iterations = 0
     for epoch in range(opt.niter):              # niter为环境设置中，要训练的论述epoch
         data_iter = iter(dataloader)            # iter迭代每一个加载的数据
@@ -188,7 +190,7 @@ if __name__=="__main__":
             for p in netD.parameters(): # 重置requires_grad
                 p.requires_grad = True # 在下面的 netG 更新中它们被设置为 False 
 
-            # 设置训练判别器次数 Diters
+            # 判别器重复训练设置
             if gen_iterations < 25 or gen_iterations % 500 == 0:
                 Diters = 100
             else:
@@ -232,36 +234,38 @@ if __name__=="__main__":
                 # gini_fake = entropy.Gini_Impurity(netD_predfake, lambda_gini).value()
 
                 # 加入Tsallis熵(q必须为≠1的非负实数)
-                lambda_tsallis = 0.01
-                tsallis_fake = entropy.Tsallis_Entropy(netD_predfake, lambda_tsallis).value()
+                # q = 2
+                # lambda_tsallis = 0.01
+                # tsallis_fake = entropy.Tsallis_Entropy(netD_predfake, lambda_tsallis, 2).value()
 
                 # 加入Tsallis相对熵(类似于KL散度，要求q必须为≠1的非负实数)
                 # lambda_tsallis_relative = 0.01
                 # tsallis_relative_fake = entropy.Tsallis_Relative_Entropy(预测标签, 真实标签, lambda_tsallis_relative).value()
 
-                '''----------------------------------------jia----------------------------------------'''
-                lambda_gp = 0.1
-                # epsilon是位于0-1之间均匀分布的随机权重项
-                epsilon = torch.rand(real.size(0), 1, 1, 1).cuda()   # size(0)为矩阵行数
-                # 获取夹在real和fake之间的随机分布
-                x_hat = epsilon * real + (1 - epsilon) * fake.requires_grad_(True)
-                _, y_hat = netD(x_hat)
-                # 计算y_hat相对于x_hat的梯度之和
-                gradients = autograd.grad(
-                    outputs=y_hat,
-                    inputs=x_hat,
-                    grad_outputs=torch.ones(y_hat.size()).cuda(),
-                    create_graph=True,
-                    retain_graph=True,
-                    only_inputs=True,
-                )[0]
-                gradients = gradients.view(gradients.size(0), -1)
-                gradient_penalty = lambda_gp * torch.mean(((gradients.norm(2, dim=1) - 1) ** 2))
+                '''----------------------------------------WGAN_GP的梯度惩罚项----------------------------------------'''
+                # lambda_gp = 0.1
+                # # epsilon是位于0-1之间均匀分布的随机权重项
+                # epsilon = torch.rand(real.size(0), 1, 1, 1).cuda()   # size(0)为矩阵行数
+                # # 获取夹在real和fake之间的随机分布
+                # x_hat = epsilon * real + (1 - epsilon) * fake.requires_grad_(True)
+                # _, y_hat = netD(x_hat)
+                # # 计算y_hat相对于x_hat的梯度之和
+                # gradients = autograd.grad(
+                #     outputs=y_hat,
+                #     inputs=x_hat,
+                #     grad_outputs=torch.ones(y_hat.size()).cuda(),
+                #     create_graph=True,
+                #     retain_graph=True,
+                #     only_inputs=True,
+                # )[0]
+                # gradients = gradients.view(gradients.size(0), -1)
+                # gradient_penalty = lambda_gp * torch.mean(((gradients.norm(2, dim=1) - 1) ** 2))
 
                 '''----------------------------------------计算判别器总误差‘梯度’并更新----------------------------------------'''
+                errD = errD_real - errD_fake
                 # errD = errD_real - errD_fake + gini_fake
                 # errD = errD_real - errD_fake + tsallis_fake
-                errD = errD_real - errD_fake - gradient_penalty
+                # errD = errD_real - errD_fake - gradient_penalty
                 optimizerD.step()           # 进行梯度更新
 
             ############################
@@ -283,15 +287,18 @@ if __name__=="__main__":
             # (3) 输出相关的训练数据
             ###########################
             if i % 50 == 0 :
+                print('[%d/%d][%d/%d][%d] Loss_D: %f Loss_G: %f Loss_D_real: %f Loss_D_fake: %f'
+                    % (epoch, opt.niter, i, len(dataloader), gen_iterations,
+                    errD.data[0], errG.data[0], errD_real.data[0], errD_fake.data[0]))
                 # print('[%d/%d][%d/%d][%d] Loss_D: %f Loss_G: %f Loss_D_real: %f Loss_D_fake: %f Gini_fake: %f'
                 #     % (epoch, opt.niter, i, len(dataloader), gen_iterations,
                 #     errD.data[0], errG.data[0], errD_real.data[0], errD_fake.data[0], gini_fake.item()))
                 # print('[%d/%d][%d/%d][%d] Loss_D: %f Loss_G: %f Loss_D_real: %f Loss_D_fake: %f Tsallis_fake: %f'
                 #     % (epoch, opt.niter, i, len(dataloader), gen_iterations,
                 #     errD.data[0], errG.data[0], errD_real.data[0], errD_fake.data[0], tsallis_fake.item()))
-                print('[%d/%d][%d/%d][%d] Loss_D: %f Loss_G: %f Loss_D_real: %f Loss_D_fake: %f Gradient_Penalty: %f'
-                    % (epoch, opt.niter, i, len(dataloader), gen_iterations,
-                    errD.data[0], errG.data[0], errD_real.data[0], errD_fake.data[0], gradient_penalty.item()))
+                # print('[%d/%d][%d/%d][%d] Loss_D: %f Loss_G: %f Loss_D_real: %f Loss_D_fake: %f Gradient_Penalty: %f'
+                #     % (epoch, opt.niter, i, len(dataloader), gen_iterations,
+                #     errD.data[0], errG.data[0], errD_real.data[0], errD_fake.data[0], gradient_penalty.item()))
             if gen_iterations % 500 == 0:
                 real_cpu = real_cpu.mul(0.5).add(0.5)
                 vutils.save_image(real_cpu, '{0}/real_samples.png'.format(opt.experiment))
@@ -302,3 +309,6 @@ if __name__=="__main__":
         # 把测试点放进去来测试并保存
         torch.save(netG.state_dict(), '{0}/netG_epoch_{1}.pth'.format(opt.experiment, epoch))
         torch.save(netD.state_dict(), '{0}/netD_epoch_{1}.pth'.format(opt.experiment, epoch))
+
+    time_end = time.time()
+    print('迭代结束，耗时：%.2f秒'%(time_end-time_start))
