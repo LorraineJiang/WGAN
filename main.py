@@ -91,8 +91,17 @@ if __name__=="__main__":
                                 transforms.ToTensor(),
                                 transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
                             ]))
+    elif opt.dataset == 'mnist':
+        # dataset = dset.LSUN(db_path=opt.dataroot, classes=['bedroom_train'],
+        dataset = dset.MNIST(root=opt.dataroot, download=False,   #JLY
+                             transform=transforms.Compose([
+                                transforms.Scale(opt.imageSize),
+                                transforms.CenterCrop(opt.imageSize),
+                                transforms.ToTensor(),
+                                transforms.Normalize([0.5], [0.5]),
+                            ]))
     elif opt.dataset == 'cifar10':
-        dataset = dset.CIFAR10(root=opt.dataroot, download=False,   #JLY
+        dataset = dset.CIFAR10(root=opt.dataroot, train=True , download=False,   #JLY
                             transform=transforms.Compose([
                                 transforms.Scale(opt.imageSize),
                                 transforms.ToTensor(),
@@ -112,7 +121,8 @@ if __name__=="__main__":
     n_extra_layers = int(opt.n_extra_layers)
 
     # 写出生成器配置，与训练checkpoints（.pth）一起生成图像
-    generator_config = {"imageSize": opt.imageSize, "nz": nz, "nc": nc, "ngf": ngf, "ngpu": ngpu, "n_extra_layers": n_extra_layers, "noBN": opt.noBN, "mlp_G": opt.mlp_G}
+    generator_config = {"imageSize": opt.imageSize, "nz": nz, "nc": nc, "ngf": ngf, "ndf": ndf, "ngpu": ngpu,
+                        "n_extra_layers": n_extra_layers, "noBN": opt.noBN, "mlp_G": opt.mlp_G, "mlp_D": opt.mlp_D}
     with open(os.path.join(opt.experiment, "generator_config.json"), 'w') as gcfg:
         gcfg.write(json.dumps(generator_config)+"\n")
 
@@ -135,7 +145,8 @@ if __name__=="__main__":
         netG = dcgan.DCGAN_G(opt.imageSize, nz, nc, ngf, ngpu, n_extra_layers)
 
     # 写出生成器配置，与训练checkpoints（.pth）一起生成图像
-    generator_config = {"imageSize": opt.imageSize, "nz": nz, "nc": nc, "ngf": ngf, "ngpu": ngpu, "n_extra_layers": n_extra_layers, "noBN": opt.noBN, "mlp_G": opt.mlp_G}
+    generator_config = {"imageSize": opt.imageSize, "nz": nz, "nc": nc, "ngf": ngf, "ndf": ndf, "ngpu": ngpu,
+                        "n_extra_layers": n_extra_layers, "noBN": opt.noBN, "mlp_G": opt.mlp_G, "mlp_D": opt.mlp_D}
     with open(os.path.join(opt.experiment, "generator_config.json"), 'w') as gcfg:
         gcfg.write(json.dumps(generator_config)+"\n")
 
@@ -155,7 +166,7 @@ if __name__=="__main__":
     print(netD)
 
     # 进行类型转换，转为tensor类型
-    input = torch.FloatTensor(opt.batchSize, 3, opt.imageSize, opt.imageSize)
+    input = torch.FloatTensor(opt.batchSize, opt.nc, opt.imageSize, opt.imageSize)
     noise = torch.FloatTensor(opt.batchSize, nz, 1, 1)
     fixed_noise = torch.FloatTensor(opt.batchSize, nz, 1, 1).normal_(0, 1)
     one = torch.FloatTensor([1])
@@ -299,6 +310,8 @@ if __name__=="__main__":
                 # print('[%d/%d][%d/%d][%d] Loss_D: %f Loss_G: %f Loss_D_real: %f Loss_D_fake: %f Gradient_Penalty: %f'
                 #     % (epoch, opt.niter, i, len(dataloader), gen_iterations,
                 #     errD.data[0], errG.data[0], errD_real.data[0], errD_fake.data[0], gradient_penalty.item()))
+
+            # 把测试点放进去来测试保存
             if gen_iterations % 500 == 0:
                 real_cpu = real_cpu.mul(0.5).add(0.5)
                 vutils.save_image(real_cpu, '{0}/real_samples.png'.format(opt.experiment))
@@ -306,7 +319,7 @@ if __name__=="__main__":
                 fake.data = fake.data.mul(0.5).add(0.5)
                 vutils.save_image(fake.data, '{0}/fake_samples_{1}.png'.format(opt.experiment, gen_iterations))
 
-        # 把测试点放进去来测试并保存
+        # 保存模型(仅保存模型参数，若保存整个模型则去掉.state_dict())
         torch.save(netG.state_dict(), '{0}/netG_epoch_{1}.pth'.format(opt.experiment, epoch))
         torch.save(netD.state_dict(), '{0}/netD_epoch_{1}.pth'.format(opt.experiment, epoch))
 
