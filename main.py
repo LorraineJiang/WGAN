@@ -1,26 +1,23 @@
-from __future__ import print_function
 import argparse
 import random
-from numpy.lib.type_check import real
 import torch
-import torch.nn as nn
-import torch.nn.parallel
 import torch.backends.cudnn as cudnn
 import torch.optim as optim
-import torch.utils.data
 import torchvision.datasets as dset
 import torchvision.transforms as transforms
 import torchvision.utils as vutils
 import torch.autograd as autograd
 from torch.autograd import Variable
 import os
+import sys
 import json
 import time
 from tensorboardX import SummaryWriter
 
 import models.dcgan as dcgan
 import models.mlp as mlp
-import entropy
+import fuction.entropy as Entropy
+import fuction.print_save as PrintSave
 
 if __name__=="__main__":
 
@@ -54,12 +51,17 @@ if __name__=="__main__":
     parser.add_argument('--experiment', default=None, help='Where to store samples and models')
     parser.add_argument('--adam', action='store_true', help='Whether to use adam (default is rmsprop)')
     opt = parser.parse_args()
-    print(opt)
 
     # 选择训练结果的存储位置，默认位置为samples文件夹下
     if opt.experiment is None:
         opt.experiment = 'samples'
     os.makedirs(opt.experiment)
+
+    # 打开存储文件，保证在控制台输出的同时也保存到文件
+    save_file = opt.experiment + '/output_log.log'
+    # os.makedirs(save_file)
+    sys.stdout = PrintSave.Logger(filename=save_file, stream=sys.stdout)
+    print(opt)
 
     # 定义tensorboardX实例，以及存储位置:SummaryWriter(存放路径)
     # 添加标量add_scalar(图的名称，Y轴数据，X轴数据)
@@ -69,7 +71,7 @@ if __name__=="__main__":
 
     # 为CPU/GPU设置种子用于生成随机数，以使得结果是确定的
     opt.manualSeed = random.randint(1, 10000) # fix seed
-    print("Random Seed: ", opt.manualSeed)
+    print("Random Seed: {}".format(opt.manualSeed))
     random.seed(opt.manualSeed)
     torch.manual_seed(opt.manualSeed)
 
@@ -275,13 +277,13 @@ if __name__=="__main__":
                 # 根据训练gan的类型选择是否加入Gini熵
                 if opt.gantype in ['wgangini', 'wgangp_gini']:
                     lambda_gini = 0.01
-                    gini_fake = entropy.Gini_Impurity(netD_predfake, lambda_gini).value()
+                    gini_fake = Entropy.Gini_Impurity(netD_predfake, lambda_gini).value()
 
                 # 根据训练gan的类型选择是否加入Tsallis熵(q必须为≠1的非负实数)
                 if opt.gantype in ['wgantsallis', 'wgangp_tsallis']:
                     q = 2
                     lambda_tsallis = 0.01
-                    tsallis_fake = entropy.Tsallis_Entropy(netD_predfake, lambda_tsallis, 2).value()
+                    tsallis_fake = Entropy.Tsallis_Entropy(netD_predfake, lambda_tsallis, 2).value()
 
                 # 加入Tsallis相对熵(类似于KL散度，要求q必须为≠1的非负实数)
                 # lambda_tsallis_relative = 0.01
@@ -315,21 +317,34 @@ if __name__=="__main__":
             # (3) 输出相关的训练数据
             ###########################
             if i % 50 == 0 :
+                # 可视化Loss_D,Loss_G,Loss_D_real,Loss_D_fake,及数据输出和存储
                 writer_scalar.add_scalar('Loss_D', errD.data[0], i)
                 writer_scalar.add_scalar('Loss_G', errG.data[0], i)
                 writer_scalar.add_scalars('Loss_D_real_fake', {'Loss_D_real' : errD_real.data[0], 'Loss_D_fake' : errD_fake.data[0]}, i)
-                print('[%d/%d][%d/%d][%d] Loss_D: %f Loss_G: %f Loss_D_real: %f Loss_D_fake: %f'
+                print_str = '[%d/%d][%d/%d][%d] Loss_D: %f Loss_G: %f Loss_D_real: %f Loss_D_fake: %f'\
                     % (epoch, opt.niter, i, len(dataloader), gen_iterations,
-                    errD.data[0], errG.data[0], errD_real.data[0], errD_fake.data[0]))
-                # print('[%d/%d][%d/%d][%d] Loss_D: %f Loss_G: %f Loss_D_real: %f Loss_D_fake: %f Gini_fake: %f'
-                #     % (epoch, opt.niter, i, len(dataloader), gen_iterations,
-                #     errD.data[0], errG.data[0], errD_real.data[0], errD_fake.data[0], gini_fake.item()))
-                # print('[%d/%d][%d/%d][%d] Loss_D: %f Loss_G: %f Loss_D_real: %f Loss_D_fake: %f Tsallis_fake: %f'
-                #     % (epoch, opt.niter, i, len(dataloader), gen_iterations,
-                #     errD.data[0], errG.data[0], errD_real.data[0], errD_fake.data[0], tsallis_fake.item()))
-                # print('[%d/%d][%d/%d][%d] Loss_D: %f Loss_G: %f Loss_D_real: %f Loss_D_fake: %f Gradient_Penalty: %f'
-                #     % (epoch, opt.niter, i, len(dataloader), gen_iterations,
-                #     errD.data[0], errG.data[0], errD_real.data[0], errD_fake.data[0], gradient_penalty.item()))
+                    errD.data[0], errG.data[0], errD_real.data[0], errD_fake.data[0])
+                # 根据训练gan的类型具体可视化和输出
+                if opt.gantype == 'wgangini':
+                    writer_scalar.add_scalar('Gini_fake', gini_fake.item(), i)
+                    print_str = print_str + ' Gini_fake: %f' % (gini_fake.item())
+                elif opt.gantype == 'wgantsallis':
+                    writer_scalar.add_scalar('Tsallis_fake', tsallis_fake.item(), i)
+                    print_str = print_str + ' Tsallis_fake: %f' % (tsallis_fake.item())
+                elif opt.gantype == 'wgangp':
+                    writer_scalar.add_scalar('Gradient_Penalty', gradient_penalty.item(), i)
+                    print_str = print_str + ' Gradient_Penalty: %f' % (gradient_penalty.item())
+                elif opt.gantype == 'wgangp_gini':
+                    writer_scalar.add_scalar('Gradient_Penalty', gradient_penalty.item(), i)
+                    writer_scalar.add_scalar('Gini_fake', gini_fake.item(), i)
+                    print_str = print_str + ' Gradient_Penalty: %f' % (gradient_penalty.item())
+                    print_str = print_str + ' Gini_fake: %f' % (gini_fake.item())
+                elif opt.gantype == 'wgangp_tsallis':
+                    writer_scalar.add_scalar('Gradient_Penalty', gradient_penalty.item(), i)
+                    writer_scalar.add_scalar('Tsallis_fake', tsallis_fake.item(), i)
+                    print_str = print_str + ' Gradient_Penalty: %f' % (gradient_penalty.item())
+                    print_str = print_str + ' Tsallis_fake: %f' % (tsallis_fake.item())
+                print(print_str)
 
             # 把测试点放进去来测试保存
             if gen_iterations % 500 == 0:
