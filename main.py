@@ -16,6 +16,7 @@ from torch.autograd import Variable
 import os
 import json
 import time
+from tensorboardX import SummaryWriter
 
 import models.dcgan as dcgan
 import models.mlp as mlp
@@ -25,6 +26,7 @@ if __name__=="__main__":
 
     '''----------------------------------------环境选择----------------------------------------'''
     parser = argparse.ArgumentParser()
+    parser.add_argument('--gantype', required=True, help='wgan| wgangini | wgantsallis | wgangp  | wgangp_gini | wgangp_tsallis ')
     parser.add_argument('--dataset', required=True, help='cifar10 | lsun | imagenet | folder | lfw ')
     parser.add_argument('--dataroot', required=True, help='path to dataset')
     parser.add_argument('--workers', type=int, help='number of data loading workers', default=2)
@@ -54,10 +56,16 @@ if __name__=="__main__":
     opt = parser.parse_args()
     print(opt)
 
-    # 若没有选择环境，则选择默认环境
+    # 选择训练结果的存储位置，默认位置为samples文件夹下
     if opt.experiment is None:
         opt.experiment = 'samples'
-    os.system('mkdir {0}'.format(opt.experiment))
+    os.makedirs(opt.experiment)
+
+    # 定义tensorboardX实例，以及存储位置:SummaryWriter(存放路径)
+    # 添加标量add_scalar(图的名称，Y轴数据，X轴数据)
+    # 添加多个标量add_scalars(图的名称，Y轴数据{'名称1'：值，'名称2'：值}，X轴数据)
+    writer_scalar = SummaryWriter(log_dir = opt.experiment + '/scalar')
+    writer_graph = SummaryWriter(log_dir = opt.experiment + '/graph')
 
     # 为CPU/GPU设置种子用于生成随机数，以使得结果是确定的
     opt.manualSeed = random.randint(1, 10000) # fix seed
@@ -93,7 +101,7 @@ if __name__=="__main__":
                             ]))
     elif opt.dataset == 'mnist':
         # dataset = dset.LSUN(db_path=opt.dataroot, classes=['bedroom_train'],
-        dataset = dset.MNIST(root=opt.dataroot, download=False,   #JLY
+        dataset = dset.MNIST(root=opt.dataroot, download=False,   #是否下载
                              transform=transforms.Compose([
                                 transforms.Scale(opt.imageSize),
                                 transforms.CenterCrop(opt.imageSize),
@@ -101,7 +109,7 @@ if __name__=="__main__":
                                 transforms.Normalize([0.5], [0.5]),
                             ]))
     elif opt.dataset == 'cifar10':
-        dataset = dset.CIFAR10(root=opt.dataroot, train=True , download=False,   #JLY
+        dataset = dset.CIFAR10(root=opt.dataroot, train=True , download=False,   #是否下载
                             transform=transforms.Compose([
                                 transforms.Scale(opt.imageSize),
                                 transforms.ToTensor(),
@@ -233,50 +241,59 @@ if __name__=="__main__":
 
                 # 在判别器D中训练fake数据
                 noise.resize_(opt.batchSize, nz, 1, 1).normal_(0, 1)
-                noisev = Variable(noise, volatile = True)       # 完全冻结生成器 netG 
-                fake = Variable(netG(noisev).data)
+                with torch.no_grad():       # 完全冻结生成器 netG 
+                    noisev = Variable(noise)       
+                    fake = Variable(netG(noisev).data)
                 inputv = fake
                 netD_predfake, errD_fake = netD(inputv)
                 errD_fake.backward(mone)    # backward函数,mone是因为最大化目标函数=最大化第一项and最小化第二项
+
+                '''----------------------------------------WGAN_GP的梯度惩罚项----------------------------------------'''
+                if opt.gantype in ['wgangp', 'wgangp_gini', 'wgangp_tsallis']:
+                    lambda_gp = 0.1
+                    # epsilon是位于0-1之间均匀分布的随机权重项
+                    epsilon = torch.rand(real.size(0), 1, 1, 1)        # size(0)为矩阵行数
+                    if opt.cuda:epsilon.cuda()
+                    # 获取夹在real和fake之间的随机分布
+                    x_hat = epsilon * real + (1 - epsilon) * fake.requires_grad_(True)
+                    _, y_hat = netD(x_hat)
+                    # 计算y_hat相对于x_hat的梯度之和
+                    grad_outputs = torch.ones(y_hat.size())
+                    if opt.cuda:grad_outputs.cuda()
+                    gradients = autograd.grad(
+                        outputs=y_hat,
+                        inputs=x_hat,
+                        grad_outputs=grad_outputs,
+                        create_graph=True,
+                        retain_graph=True,
+                        only_inputs=True,
+                    )[0]
+                    gradients = gradients.view(gradients.size(0), -1)
+                    gradient_penalty = lambda_gp * torch.mean(((gradients.norm(2, dim=1) - 1) ** 2))
                 
                 '''----------------------------------------关于熵的相关改动----------------------------------------'''
-                # 加入Gini熵
-                # lambda_gini = 0.01
-                # gini_fake = entropy.Gini_Impurity(netD_predfake, lambda_gini).value()
+                # 根据训练gan的类型选择是否加入Gini熵
+                if opt.gantype in ['wgangini', 'wgangp_gini']:
+                    lambda_gini = 0.01
+                    gini_fake = entropy.Gini_Impurity(netD_predfake, lambda_gini).value()
 
-                # 加入Tsallis熵(q必须为≠1的非负实数)
-                # q = 2
-                # lambda_tsallis = 0.01
-                # tsallis_fake = entropy.Tsallis_Entropy(netD_predfake, lambda_tsallis, 2).value()
+                # 根据训练gan的类型选择是否加入Tsallis熵(q必须为≠1的非负实数)
+                if opt.gantype in ['wgantsallis', 'wgangp_tsallis']:
+                    q = 2
+                    lambda_tsallis = 0.01
+                    tsallis_fake = entropy.Tsallis_Entropy(netD_predfake, lambda_tsallis, 2).value()
 
                 # 加入Tsallis相对熵(类似于KL散度，要求q必须为≠1的非负实数)
                 # lambda_tsallis_relative = 0.01
                 # tsallis_relative_fake = entropy.Tsallis_Relative_Entropy(预测标签, 真实标签, lambda_tsallis_relative).value()
 
-                '''----------------------------------------WGAN_GP的梯度惩罚项----------------------------------------'''
-                # lambda_gp = 0.1
-                # # epsilon是位于0-1之间均匀分布的随机权重项
-                # epsilon = torch.rand(real.size(0), 1, 1, 1).cuda()   # size(0)为矩阵行数
-                # # 获取夹在real和fake之间的随机分布
-                # x_hat = epsilon * real + (1 - epsilon) * fake.requires_grad_(True)
-                # _, y_hat = netD(x_hat)
-                # # 计算y_hat相对于x_hat的梯度之和
-                # gradients = autograd.grad(
-                #     outputs=y_hat,
-                #     inputs=x_hat,
-                #     grad_outputs=torch.ones(y_hat.size()).cuda(),
-                #     create_graph=True,
-                #     retain_graph=True,
-                #     only_inputs=True,
-                # )[0]
-                # gradients = gradients.view(gradients.size(0), -1)
-                # gradient_penalty = lambda_gp * torch.mean(((gradients.norm(2, dim=1) - 1) ** 2))
-
                 '''----------------------------------------计算判别器总误差‘梯度’并更新----------------------------------------'''
-                errD = errD_real - errD_fake
-                # errD = errD_real - errD_fake + gini_fake
-                # errD = errD_real - errD_fake + tsallis_fake
-                # errD = errD_real - errD_fake - gradient_penalty
+                if opt.gantype == 'wgan':errD = errD_real - errD_fake
+                elif opt.gantype == 'wgangini':errD = errD_real - errD_fake + gini_fake
+                elif opt.gantype == 'wgantsallis':errD = errD_real - errD_fake + tsallis_fake
+                elif opt.gantype == 'wgangp':errD = errD_real - errD_fake + gradient_penalty
+                elif opt.gantype == 'wgangp_gini':errD = errD_real - errD_fake + gradient_penalty + gini_fake
+                elif opt.gantype == 'wgangp_tsallis':errD = errD_real - errD_fake + gradient_penalty + tsallis_fake
                 optimizerD.step()           # 进行梯度更新
 
             ############################
@@ -298,6 +315,9 @@ if __name__=="__main__":
             # (3) 输出相关的训练数据
             ###########################
             if i % 50 == 0 :
+                writer_scalar.add_scalar('Loss_D', errD.data[0], i)
+                writer_scalar.add_scalar('Loss_G', errG.data[0], i)
+                writer_scalar.add_scalars('Loss_D_real_fake', {'Loss_D_real' : errD_real.data[0], 'Loss_D_fake' : errD_fake.data[0]}, i)
                 print('[%d/%d][%d/%d][%d] Loss_D: %f Loss_G: %f Loss_D_real: %f Loss_D_fake: %f'
                     % (epoch, opt.niter, i, len(dataloader), gen_iterations,
                     errD.data[0], errG.data[0], errD_real.data[0], errD_fake.data[0]))
@@ -315,7 +335,8 @@ if __name__=="__main__":
             if gen_iterations % 500 == 0:
                 real_cpu = real_cpu.mul(0.5).add(0.5)
                 vutils.save_image(real_cpu, '{0}/real_samples.png'.format(opt.experiment))
-                fake = netG(Variable(fixed_noise, volatile=True))
+                with torch.no_grad():       # 完全冻结生成器 netG 
+                    fake = netG(Variable(fixed_noise))
                 fake.data = fake.data.mul(0.5).add(0.5)
                 vutils.save_image(fake.data, '{0}/fake_samples_{1}.png'.format(opt.experiment, gen_iterations))
 
