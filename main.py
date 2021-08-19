@@ -16,8 +16,9 @@ from tensorboardX import SummaryWriter
 
 import models.dcgan as dcgan
 import models.mlp as mlp
-import fuction.entropy as Entropy
-import fuction.print_save as PrintSave
+import function.entropy as Entropy
+import function.print_save as PrintSave
+import function.inception_score as IS
 
 if __name__=="__main__":
 
@@ -26,7 +27,7 @@ if __name__=="__main__":
     parser.add_argument('--gantype', required=True, help='wgan| wgangini | wgantsallis | wgangp  | wgangp_gini | wgangp_tsallis ')
     parser.add_argument('--dataset', required=True, help='cifar10 | lsun | imagenet | folder | lfw ')
     parser.add_argument('--dataroot', required=True, help='path to dataset')
-    parser.add_argument('--workers', type=int, help='number of data loading workers', default=2)
+    parser.add_argument('--workers', type=int, default=2, help='number of data loading workers')
     parser.add_argument('--batchSize', type=int, default=64, help='input batch size')
     parser.add_argument('--imageSize', type=int, default=64, help='the height / width of the input image to network')
     parser.add_argument('--nc', type=int, default=3, help='input image channels')
@@ -211,7 +212,8 @@ if __name__=="__main__":
             for p in netD.parameters(): # 重置requires_grad
                 p.requires_grad = True # 在下面的 netG 更新中它们被设置为 False 
 
-            # 判别器重复训练设置
+            # 在第一个epoch中，将判别器迭代100次，将生成器迭代１次
+            # 当生成器迭代次数>=25时，生成器每迭代一次，判别器迭代默认的５次
             if gen_iterations < 25 or gen_iterations % 500 == 0:
                 Diters = 100
             else:
@@ -255,13 +257,13 @@ if __name__=="__main__":
                     lambda_gp = 0.1
                     # epsilon是位于0-1之间均匀分布的随机权重项
                     epsilon = torch.rand(real.size(0), 1, 1, 1)        # size(0)为矩阵行数
-                    if opt.cuda:epsilon.cuda()
+                    if opt.cuda: epsilon = epsilon.cuda()
                     # 获取夹在real和fake之间的随机分布
                     x_hat = epsilon * real + (1 - epsilon) * fake.requires_grad_(True)
                     _, y_hat = netD(x_hat)
                     # 计算y_hat相对于x_hat的梯度之和
                     grad_outputs = torch.ones(y_hat.size())
-                    if opt.cuda:grad_outputs.cuda()
+                    if opt.cuda: grad_outputs = grad_outputs.cuda()
                     gradients = autograd.grad(
                         outputs=y_hat,
                         inputs=x_hat,
@@ -346,12 +348,15 @@ if __name__=="__main__":
                     print_str = print_str + ' Tsallis_fake: %f' % (tsallis_fake.item())
                 print(print_str)
 
-            # 把测试点放进去来测试保存
+            # 每500iterations就输出并保存一次生成效果
             if gen_iterations % 500 == 0:
                 real_cpu = real_cpu.mul(0.5).add(0.5)
                 vutils.save_image(real_cpu, '{0}/real_samples.png'.format(opt.experiment))
                 with torch.no_grad():       # 完全冻结生成器 netG 
                     fake = netG(Variable(fixed_noise))
+                if opt.nc == 3:
+                    inception_score_mean, inception_score_std = IS.inception_score(imgs=fake, cuda=False, batch_size=64, resize=True, splits=1)
+                    print('                  Inception_Score: %f ± %f' % (inception_score_mean, inception_score_std))
                 fake.data = fake.data.mul(0.5).add(0.5)
                 vutils.save_image(fake.data, '{0}/fake_samples_{1}.png'.format(opt.experiment, gen_iterations))
 

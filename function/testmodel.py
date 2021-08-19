@@ -56,29 +56,29 @@ fake = netG(noise)
 fake.data = fake.data.mul(0.5).add(0.5)
 vutils.save_image(fake.data, '{0}/fake_testsamples.png'.format(experiment))
 
-# 测试判别器网络    判断效果不能用acc！！！！！！！！有误！！！！！
-imageSize = 64
-dataset = dset.MNIST(root=dataroot, download=False,   #是否下载
-                     train=False,
-                     transform=transforms.Compose([
-                     transforms.Scale(imageSize),
-                     transforms.CenterCrop(imageSize),
-                     transforms.ToTensor(),
-                     transforms.Normalize([0.5], [0.5]),
-            ]))
-test_loader = torch.utils.data.DataLoader(dataset, batchSize, shuffle=True)
-for epoch in range(1):
-    correct, total = 0, 0
-    data_iter = iter(test_loader)
-    realimage, label = data_iter.next()
-    outputs, _ = netD(realimage)
-    print('!!!outputs!!!!!',outputs)
-    _, pred = torch.max(outputs, 1)
-    print('!!!pred label!!!!!',pred,label)
-    correct += (pred == label).sum().float()
-    total += len(label)
-    print('!!!correct total!!!!!',correct.item(),total)
-    acc = correct / total
-    print('!!!acc!!!!!',acc.item())
-    with SummaryWriter(logdir=experiment+'graphD', comment='NetD') as w:
-        w.add_graph(netD, realimage)
+# # 测试判别器网络    判断效果不能用acc！！！！！！！！有误！！！！！
+# imageSize = 64
+# dataset = dset.MNIST(root=dataroot, download=False,   #是否下载
+#                      train=False,
+#                      transform=transforms.Compose([
+#                      transforms.Scale(imageSize),
+#                      transforms.CenterCrop(imageSize),
+#                      transforms.ToTensor(),
+#                      transforms.Normalize([0.5], [0.5]),
+#             ]))
+# test_loader = torch.utils.data.DataLoader(dataset, batchSize, shuffle=True)
+# for epoch in range(1):
+#     correct, total = 0, 0
+#     data_iter = iter(test_loader)
+#     realimage, label = data_iter.next()
+#     outputs, _ = netD(realimage)
+#     print('!!!outputs!!!!!',outputs)
+#     _, pred = torch.max(outputs, 1)
+#     print('!!!pred label!!!!!',pred,label)
+#     correct += (pred == label).sum().float()
+#     total += len(label)
+#     print('!!!correct total!!!!!',correct.item(),total)
+#     acc = correct / total
+#     print('!!!acc!!!!!',acc.item())
+#     with SummaryWriter(logdir=experiment+'graphD', comment='NetD') as w:
+#         w.add_graph(netD, realimage)
