@@ -355,8 +355,8 @@ if __name__=="__main__":
                 with torch.no_grad():       # 完全冻结生成器 netG 
                     fake = netG(Variable(fixed_noise))
                 if opt.nc == 3:
-                    inception_score_mean, inception_score_std = IS.inception_score(imgs=fake, cuda=False, batch_size=64, resize=True, splits=1)
-                    print('                  Inception_Score: %f ± %f' % (inception_score_mean, inception_score_std))
+                    inception_score_mean, inception_score_std = IS.inception_score(imgs=fake, cuda=True, batch_size=64, resize=True, splits=1)
+                    print('[Generator iterations: %d] Inception_Score: %f ± %f' % (gen_iterations, inception_score_mean, inception_score_std))
                 fake.data = fake.data.mul(0.5).add(0.5)
                 vutils.save_image(fake.data, '{0}/fake_samples_{1}.png'.format(opt.experiment, gen_iterations))
 

@@ -19,7 +19,7 @@ def inception_score(imgs, cuda=True, batch_size=32, resize=False, splits=1):
     N = len(imgs)
 
     assert batch_size > 0
-    assert N > batch_size
+    assert N >= batch_size
 
     # Set up dtype
     if cuda:
