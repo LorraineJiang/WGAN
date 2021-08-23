@@ -56,7 +56,7 @@ if __name__=="__main__":
     # 选择训练结果的存储位置，默认位置为samples文件夹下
     if opt.experiment is None:
         opt.experiment = 'samples'
-    os.makedirs(opt.experiment)
+    os.makedirs(opt.experiment, exist_ok=True)
 
     # 打开存储文件，保证在控制台输出的同时也保存到文件
     save_file = opt.experiment + '/output_log.log'
@@ -222,9 +222,10 @@ if __name__=="__main__":
             while j < Diters and i < len(dataloader):
                 j += 1
 
-                # 梯度裁剪，clamp类似于clip：在原对象基础上进行修改，规范到一个区间
-                for p in netD.parameters():
-                    p.data.clamp_(opt.clamp_lower, opt.clamp_upper)
+                if opt.gantype in ['wgan', 'wgan_gini', 'wgan_tsallis']:
+                    # 梯度裁剪，clamp类似于clip：在原对象基础上进行修改，规范到一个区间
+                    for p in netD.parameters():
+                        p.data.clamp_(opt.clamp_lower, opt.clamp_upper)
 
                 data = data_iter.next()
                 i += 1
@@ -254,7 +255,7 @@ if __name__=="__main__":
 
                 '''----------------------------------------WGAN_GP的梯度惩罚项----------------------------------------'''
                 if opt.gantype in ['wgangp', 'wgangp_gini', 'wgangp_tsallis']:
-                    lambda_gp = 0.1
+                    lambda_gp = 10
                     # epsilon是位于0-1之间均匀分布的随机权重项
                     epsilon = torch.rand(real.size(0), 1, 1, 1)        # size(0)为矩阵行数
                     if opt.cuda: epsilon = epsilon.cuda()
@@ -278,7 +279,7 @@ if __name__=="__main__":
                 '''----------------------------------------关于熵的相关改动----------------------------------------'''
                 # 根据训练gan的类型选择是否加入Gini熵
                 if opt.gantype in ['wgangini', 'wgangp_gini']:
-                    lambda_gini = 0.01
+                    lambda_gini = 0.1
                     gini_fake = Entropy.Gini_Impurity(netD_predfake, lambda_gini).value()
 
                 # 根据训练gan的类型选择是否加入Tsallis熵(q必须为≠1的非负实数)
@@ -357,6 +358,7 @@ if __name__=="__main__":
                 if opt.nc == 3:
                     inception_score_mean, inception_score_std = IS.inception_score(imgs=fake, cuda=True, batch_size=64, resize=True, splits=1)
                     print('[Generator iterations: %d] Inception_Score: %f ± %f' % (gen_iterations, inception_score_mean, inception_score_std))
+                    writer_scalar.add_scalar('Inception_score', inception_score_mean, gen_iterations)
                 fake.data = fake.data.mul(0.5).add(0.5)
                 vutils.save_image(fake.data, '{0}/fake_samples_{1}.png'.format(opt.experiment, gen_iterations))
 
@@ -366,3 +368,5 @@ if __name__=="__main__":
 
     time_end = time.time()
     print('迭代结束，耗时：%.2f秒'%(time_end-time_start))
+    writer_scalar.close()
+    writer_graph.close()
