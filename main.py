@@ -18,7 +18,7 @@ import models.dcgan as dcgan
 import models.mlp as mlp
 import function.entropy as Entropy
 import function.print_save as PrintSave
-import function.inception_score as IS
+import function.metrics as metrics
 
 if __name__=="__main__":
 
@@ -193,8 +193,8 @@ if __name__=="__main__":
 
     # 优化器设置：Adam/RMSProp
     if opt.adam:
-        optimizerD = optim.Adam(netD.parameters(), lr=opt.lrD, betas=(opt.beta1, 0.999))
-        optimizerG = optim.Adam(netG.parameters(), lr=opt.lrG, betas=(opt.beta1, 0.999))
+        optimizerD = optim.Adam(netD.parameters(), lr=opt.lrD, betas=(opt.beta1, 0.9))
+        optimizerG = optim.Adam(netG.parameters(), lr=opt.lrG, betas=(opt.beta1, 0.9))
     else:
         optimizerD = optim.RMSprop(netD.parameters(), lr = opt.lrD)
         optimizerG = optim.RMSprop(netG.parameters(), lr = opt.lrG)
@@ -232,11 +232,11 @@ if __name__=="__main__":
 
                 # 在判别器D中训练real数据
                 real_cpu, _ = data
+                # 将判别器的优化器参数清零一下，最后再用step()将backward()计算出来的梯度更新
                 netD.zero_grad()
                 batch_size = real_cpu.size(0)
 
-                if opt.cuda:
-                    real_cpu = real_cpu.cuda()
+                real_cpu = real_cpu.cuda() if opt.cuda else real_cpu
                 input.resize_as_(real_cpu).copy_(real_cpu)
                 inputv = Variable(input)
                 real = inputv
@@ -258,13 +258,15 @@ if __name__=="__main__":
                     lambda_gp = 10
                     # epsilon是位于0-1之间均匀分布的随机权重项
                     epsilon = torch.rand(real.size(0), 1, 1, 1)        # size(0)为矩阵行数
-                    if opt.cuda: epsilon = epsilon.cuda()
+                    epsilon = epsilon.cuda() if opt.cuda else epsilon
                     # 获取夹在real和fake之间的随机分布
-                    x_hat = epsilon * real + (1 - epsilon) * fake.requires_grad_(True)
+                    x_hat = epsilon * real + (1 - epsilon) * fake
+                    x_hat = x_hat.cuda() if opt.cuda else x_hat
+                    x_hat = Variable(x_hat, requires_grad=True)
                     _, y_hat = netD(x_hat)
                     # 计算y_hat相对于x_hat的梯度之和
                     grad_outputs = torch.ones(y_hat.size())
-                    if opt.cuda: grad_outputs = grad_outputs.cuda()
+                    grad_outputs = grad_outputs.cuda() if opt.cuda else grad_outputs
                     gradients = autograd.grad(
                         outputs=y_hat,
                         inputs=x_hat,
@@ -275,6 +277,7 @@ if __name__=="__main__":
                     )[0]
                     gradients = gradients.view(gradients.size(0), -1)
                     gradient_penalty = lambda_gp * torch.mean(((gradients.norm(2, dim=1) - 1) ** 2))
+                    gradient_penalty.backward(mone)
                 
                 '''----------------------------------------关于熵的相关改动----------------------------------------'''
                 # 根据训练gan的类型选择是否加入Gini熵
@@ -293,6 +296,7 @@ if __name__=="__main__":
                 # tsallis_relative_fake = entropy.Tsallis_Relative_Entropy(预测标签, 真实标签, lambda_tsallis_relative).value()
 
                 '''----------------------------------------计算判别器总误差‘梯度’并更新----------------------------------------'''
+                errD = Variable
                 if opt.gantype == 'wgan':errD = errD_real - errD_fake
                 elif opt.gantype == 'wgangini':errD = errD_real - errD_fake + gini_fake
                 elif opt.gantype == 'wgantsallis':errD = errD_real - errD_fake + tsallis_fake
@@ -306,6 +310,7 @@ if __name__=="__main__":
             ###########################
             for p in netD.parameters():
                 p.requires_grad = False             # 避免计算 
+            # 将生成器的优化器参数清零一下，最后再用step()将backward()计算出来的梯度更新
             netG.zero_grad()
             # 如果当前是最后一批数据，确保一个batch的完整
             noise.resize_(opt.batchSize, nz, 1, 1).normal_(0, 1)
@@ -320,9 +325,12 @@ if __name__=="__main__":
             # (3) 输出相关的训练数据
             ###########################
             if i % 50 == 0 :
+                # 计算wasserstein距离，输出并可视化
+                wasserstein_distance = metrics.wasserstein_distance(errD_real, errD_fake)
                 # 可视化Loss_D,Loss_G,Loss_D_real,Loss_D_fake,及数据输出和存储
                 writer_scalar.add_scalar('Loss_D', errD.data[0], i)
                 writer_scalar.add_scalar('Loss_G', errG.data[0], i)
+                writer_scalar.add_scalar('Wasserstein Distance', wasserstein_distance, i)
                 writer_scalar.add_scalars('Loss_D_real_fake', {'Loss_D_real' : errD_real.data[0], 'Loss_D_fake' : errD_fake.data[0]}, i)
                 print_str = '[%d/%d][%d/%d][%d] Loss_D: %f Loss_G: %f Loss_D_real: %f Loss_D_fake: %f'\
                     % (epoch, opt.niter, i, len(dataloader), gen_iterations,
@@ -356,7 +364,7 @@ if __name__=="__main__":
                 with torch.no_grad():       # 完全冻结生成器 netG 
                     fake = netG(Variable(fixed_noise))
                 if opt.nc == 3:
-                    inception_score_mean, inception_score_std = IS.inception_score(imgs=fake, cuda=True, batch_size=64, resize=True, splits=1)
+                    inception_score_mean, inception_score_std = metrics.inception_score(imgs=fake, cuda=True, batch_size=64, resize=True, splits=1)
                     print('[Generator iterations: %d] Inception_Score: %f ± %f' % (gen_iterations, inception_score_mean, inception_score_std))
                     writer_scalar.add_scalar('Inception_score', inception_score_mean, gen_iterations)
                 fake.data = fake.data.mul(0.5).add(0.5)

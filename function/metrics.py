@@ -9,6 +9,7 @@ from torchvision.models.inception import inception_v3
 import numpy as np
 from scipy.stats import entropy
 
+'''------------------------------Inception Score------------------------------'''
 def inception_score(imgs, cuda=True, batch_size=32, resize=False, splits=1):
     """Computes the inception score of the generated images imgs
     imgs -- Torch dataset of (3xHxW) numpy images normalized in the range [-1, 1]
@@ -94,3 +95,11 @@ def inception_score(imgs, cuda=True, batch_size=32, resize=False, splits=1):
 
     print ("Calculating Inception Score...")
     print (inception_score(IgnoreLabelDataset(cifar), cuda=True, batch_size=32, resize=True, splits=10))
+
+'''------------------------------Wasserstein Distance------------------------------'''
+def wasserstein_distance(errD_real, errD_fake):
+    """Computes the wasserstein distance
+    errD_real -- n个真实样本输入判别器D后的均值
+    errD_fake -- n个生成样本输入判别器D后的均值
+    """
+    return errD_real - errD_fake
